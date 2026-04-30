@@ -9,14 +9,15 @@
 -- Write the WITH options for COPY to import this file:
 --   id:movie:actor
 --   50:#Mission: Impossible#:Tom Cruise
---
--- The delimiter is a colon (:)
--- The quote character is a hash (#) — used around "Mission: Impossible"
--- to stop the colon inside the title from being treated as a delimiter.
+
+--The WITH statement in a COPY command is where you tell PostgreSQL 
+-- how to read the file you are importing. 
+-- Think of it as the “instructions” for understanding the file’s format.
+
 -- ----------------------------------------------------------------
 
 -- COPY movies
--- FROM 'C:\YourDirectory\movies.txt'
+-- FROM 'C:\SQL'
 -- WITH (FORMAT CSV, HEADER, DELIMITER ':', QUOTE '#');
 
 
@@ -33,7 +34,7 @@
 --     ORDER BY housing_unit_count_100_percent DESC
 --     LIMIT 20
 -- )
--- TO 'C:\YourDirectory\us_counties_top20_housing.txt'
+-- TO 'C:\SQL\us_counties_top20_housing.txt'
 -- WITH (FORMAT CSV, HEADER, DELIMITER '|');
 
 
