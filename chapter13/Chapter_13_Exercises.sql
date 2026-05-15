@@ -14,34 +14,34 @@
 -- ----------------------------------------------------------------
 
 -- Using ts_rank():
--- SELECT president,
---        speech_date,
---        ts_rank(search_speech_text,
---                to_tsquery('economy')) AS rank_score
--- FROM president_speeches
--- WHERE search_speech_text @@ to_tsquery('economy')
--- ORDER BY rank_score DESC
--- LIMIT 5;
+SELECT president,
+       speech_date,
+       ts_rank(search_speech_text,
+               to_tsquery('economy')) AS rank_score
+FROM president_speeches
+WHERE search_speech_text @@ to_tsquery('economy')
+ORDER BY rank_score DESC
+LIMIT 5;
 
 -- Using ts_rank_cd() (cover density — considers proximity):
--- SELECT president,
---        speech_date,
---        ts_rank_cd(search_speech_text,
---                   to_tsquery('economy')) AS rank_cd_score
--- FROM president_speeches
--- WHERE search_speech_text @@ to_tsquery('economy')
--- ORDER BY rank_cd_score DESC
--- LIMIT 5;
+SELECT president,
+       speech_date,
+       ts_rank_cd(search_speech_text,
+                  to_tsquery('economy')) AS rank_cd_score
+FROM president_speeches
+WHERE search_speech_text @@ to_tsquery('economy')
+ORDER BY rank_cd_score DESC
+LIMIT 5;
 
 -- Compare both side by side:
--- SELECT president,
---        speech_date,
---        ts_rank(search_speech_text, to_tsquery('economy'))    AS ts_rank,
---        ts_rank_cd(search_speech_text, to_tsquery('economy')) AS ts_rank_cd
--- FROM president_speeches
--- WHERE search_speech_text @@ to_tsquery('economy')
--- ORDER BY ts_rank DESC
--- LIMIT 10;
+SELECT president,
+       speech_date,
+       ts_rank(search_speech_text, to_tsquery('economy'))    AS ts_rank,
+       ts_rank_cd(search_speech_text, to_tsquery('economy')) AS ts_rank_cd
+FROM president_speeches
+WHERE search_speech_text @@ to_tsquery('economy')
+ORDER BY ts_rank DESC
+LIMIT 10;
 
 
 -- ----------------------------------------------------------------
@@ -51,19 +51,19 @@
 -- Show: president, speech date, and the highlighted excerpt.
 -- ----------------------------------------------------------------
 
--- SELECT president,
---        speech_date,
---        ts_headline(speech_text,
---                    to_tsquery('snow | winter'),
---                    'StartSel = <,
---                     StopSel = >,
---                     MinWords=5,
---                     MaxWords=10,
---                     MaxFragments=1')
---            AS highlighted_excerpt
--- FROM president_speeches
--- WHERE search_speech_text @@ to_tsquery('snow | winter')
--- ORDER BY speech_date;
+SELECT president,
+       speech_date,
+       ts_headline(speech_text,
+                   to_tsquery('snow | winter'),
+                   'StartSel = <,
+                    StopSel = >,
+                    MinWords=5,
+                    MaxWords=10,
+                    MaxFragments=1')
+           AS highlighted_excerpt
+FROM president_speeches
+WHERE search_speech_text @@ to_tsquery('snow | winter')
+ORDER BY speech_date;
 
 
 -- ----------------------------------------------------------------
@@ -72,26 +72,25 @@
 -- Populate it with the SECOND date found in original_text
 -- (if a second date exists — some reports span two dates).
 -- Use regexp_matches() with the 'g' flag, then skip the first
--- result using a subquery approach.
+-- result using a lateral subquery with OFFSET 1.
 -- ----------------------------------------------------------------
 
 -- Step 1: Add the column.
--- ALTER TABLE crime_reports ADD COLUMN second_date timestamp with time zone;
+ALTER TABLE crime_reports ADD COLUMN second_date timestamp with time zone;
 
 -- Step 2: Use a lateral subquery to get the second match.
--- UPDATE crime_reports cr
--- SET second_date = (
---     SELECT matches[1]::timestamptz
---     FROM regexp_matches(cr.original_text, '\d{1,2}\/\d{1,2}\/\d{2}', 'g')
---         AS t(matches)
---     OFFSET 1
---     LIMIT 1
--- );
+UPDATE crime_reports cr
+SET second_date = (
+    SELECT matches[1]::timestamptz
+    FROM regexp_matches(cr.original_text, '\d{1,2}\/\d{1,2}\/\d{2}', 'g')
+        AS t(matches)
+    OFFSET 1
+    LIMIT 1
+);
 
 -- Step 3: Verify the results.
--- SELECT crime_id, date_1, second_date
--- FROM crime_reports
--- ORDER BY crime_id;
-
 -- Note: Rows with only one date in the text will have NULL in second_date.
 -- That is expected and correct behavior.
+SELECT crime_id, date_1, second_date
+FROM crime_reports
+ORDER BY crime_id;

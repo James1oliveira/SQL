@@ -1,99 +1,120 @@
 -- ================================================================
 -- CHAPTER 15: Saving Time with Views, Functions, and Triggers
 -- TRY IT YOURSELF - EXERCISES
+-- Data directory: C:\SQL\
 -- ================================================================
--- Requires: nyc_yellow_taxi_trips_2016_06_01, meat_poultry_egg_inspect tables
+-- Requires:
+--   nyc_yellow_taxi_trips_2016_06_01  (Chapter 12 / taxi data)
+--   meat_poultry_egg_inspect          (Chapter 9)
+--   Chapter_15_Code.sql run first
 
 
--- ----------------------------------------------------------------
--- Exercise 1:
--- Create a view called nyc_taxi_trips_per_hour that shows
--- the number of taxi pickups per hour of day on June 1, 2016.
--- Then query it.
--- ----------------------------------------------------------------
+-- ================================================================
+-- EXERCISE 1
+-- Create a view that shows the number of New York City taxi trips
+-- per hour. Recreates the hourly-pickup analysis from Chapter 12
+-- as a reusable view.
+-- ================================================================
 
--- SET timezone TO 'US/Eastern';
-
--- CREATE OR REPLACE VIEW nyc_taxi_trips_per_hour AS
--- SELECT date_part('hour', tpep_pickup_datetime) AS trip_hour,
---        count(*) AS num_trips
--- FROM nyc_yellow_taxi_trips_2016_06_01
--- GROUP BY trip_hour
--- ORDER BY trip_hour;
+CREATE OR REPLACE VIEW nyc_taxi_trips_per_hour AS
+    SELECT
+        date_part('hour', tpep_pickup_datetime)::integer AS trip_hour,
+        count(*) AS num_trips
+    FROM nyc_yellow_taxi_trips_2016_06_01
+    GROUP BY trip_hour
+    ORDER BY trip_hour;
 
 -- Query the view:
--- SELECT * FROM nyc_taxi_trips_per_hour;
+SELECT * FROM nyc_taxi_trips_per_hour;
 
 
--- ----------------------------------------------------------------
--- Exercise 2:
--- Write a function called rates_per_thousand() that calculates
--- a rate per 1,000 population (or any base number).
--- Parameters:
+-- ================================================================
+-- EXERCISE 2
+-- Write a rates_per_thousand() function that works the same way
+-- as percent_change() from Listing 15-4, but multiplies by 1,000
+-- instead of 100. It should accept:
 --   observed_number  numeric  — the count being measured
---   base_number      numeric  — the population or total
---   decimal_places   integer  — rounding precision (DEFAULT 1)
--- ----------------------------------------------------------------
+--   base_number      numeric  — the population / total
+--   decimal_places   integer  — rounding precision (default 1)
+-- ================================================================
 
--- CREATE OR REPLACE FUNCTION
--- rates_per_thousand(observed_number numeric,
---                    base_number numeric,
---                    decimal_places integer DEFAULT 1)
--- RETURNS numeric AS
--- 'SELECT round((observed_number / base_number) * 1000, decimal_places);'
--- LANGUAGE SQL
--- IMMUTABLE
--- RETURNS NULL ON NULL INPUT;
+CREATE OR REPLACE FUNCTION rates_per_thousand(
+    observed_number numeric,
+    base_number     numeric,
+    decimal_places  integer DEFAULT 1
+)
+RETURNS numeric AS
+$$
+    SELECT CASE
+               WHEN base_number = 0 THEN NULL
+               ELSE round((observed_number / base_number) * 1000,
+                           decimal_places)
+           END;
+$$
+LANGUAGE SQL IMMUTABLE RETURNS NULL ON NULL INPUT;
 
--- Test the function:
--- SELECT rates_per_thousand(50, 11000, 2);
--- Expected: 4.55
+-- Test the function (expect 4.5):
+SELECT rates_per_thousand(50, 11000, 2);
 
--- Use it on library data from Chapter 8:
--- SELECT libname, stabr,
---        rates_per_thousand(visits::numeric, popu_lsa::numeric, 1)
---            AS visits_per_1000
--- FROM pls_fy2014_pupld14a
--- WHERE popu_lsa >= 250000 AND visits >= 0
--- ORDER BY visits_per_1000 DESC
--- LIMIT 10;
-
-
--- ----------------------------------------------------------------
--- Exercise 3:
--- Create a trigger on the meat_poultry_egg_inspect table that
--- automatically sets the inspection_date to 6 months from now
--- every time a new row is inserted.
--- Steps: 1) Write the function  2) Create the trigger  3) Test it.
--- ----------------------------------------------------------------
-
--- Step 1: Write the trigger function.
--- CREATE OR REPLACE FUNCTION set_inspection_date()
--- RETURNS trigger AS $$
--- BEGIN
---     NEW.inspection_date := now() + '6 months'::interval;
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
+-- Example: use it against the FBI crime data
+-- (assumes fbi_crime_data_2015 table exists from Chapter 8)
+-- SELECT city,
+--        st,
+--        population,
+--        property_crime,
+--        rates_per_thousand(property_crime::numeric,
+--                           population,
+--                           2) AS property_crime_per_thousand
+-- FROM fbi_crime_data_2015
+-- WHERE population >= 100000
+-- ORDER BY property_crime_per_thousand DESC;
 
 
--- Step 2: Create the BEFORE INSERT trigger.
--- CREATE TRIGGER inspection_date_insert
--- BEFORE INSERT ON meat_poultry_egg_inspect
--- FOR EACH ROW EXECUTE PROCEDURE set_inspection_date();
+-- ================================================================
+-- EXERCISE 3
+-- Add an inspection_date column to meat_poultry_egg_inspect,
+-- then create a trigger that automatically sets inspection_date
+-- to six months from now whenever a new row is inserted.
+-- ================================================================
 
+-- Step 1: Add the inspection_date column (IF NOT EXISTS avoids
+--         an error if you run this script more than once).
+ALTER TABLE meat_poultry_egg_inspect
+    ADD COLUMN IF NOT EXISTS inspection_date date;
 
--- Step 3: Test by inserting a new row and checking the result.
--- INSERT INTO meat_poultry_egg_inspect
---     (est_number, company, st, zip, activities)
--- VALUES
---     ('TEST001', 'Test Packing Co.', 'TX', '75001', 'Meat Processing');
+-- Step 2: Create the trigger function.
+--         It runs BEFORE INSERT so it can set the column value
+--         before the row is written to disk.
+CREATE OR REPLACE FUNCTION set_inspection_date()
+RETURNS trigger AS $$
+BEGIN
+    NEW.inspection_date := (now() + '6 months'::interval)::date;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- SELECT est_number, company, inspection_date
--- FROM meat_poultry_egg_inspect
--- WHERE est_number = 'TEST001';
+-- Step 3: Attach the trigger to the table.
+--         DROP first so re-running this file does not error.
+DROP TRIGGER IF EXISTS inspection_date_insert
+    ON meat_poultry_egg_inspect;
 
--- Expected: inspection_date = today's date + 6 months (set automatically).
+CREATE TRIGGER inspection_date_insert
+    BEFORE INSERT ON meat_poultry_egg_inspect
+    FOR EACH ROW EXECUTE FUNCTION set_inspection_date();
+
+-- Step 4: Test — insert a row and verify inspection_date is set.
+INSERT INTO meat_poultry_egg_inspect
+    (est_number, company, street, city, st, zip, phone,
+     grant_date, activities, dbas)
+VALUES
+    ('TEST001', 'Test Packing Co.', '123 Main St',
+     'Testville', 'TX', '78000', '555-555-5555',
+     '2024-01-01', 'Meat Processing', NULL);
+
+-- Confirm the trigger populated inspection_date automatically:
+SELECT est_number, company, grant_date, inspection_date
+FROM meat_poultry_egg_inspect
+WHERE est_number = 'TEST001';
 
 -- Clean up the test row:
--- DELETE FROM meat_poultry_egg_inspect WHERE est_number = 'TEST001';
+DELETE FROM meat_poultry_egg_inspect WHERE est_number = 'TEST001';

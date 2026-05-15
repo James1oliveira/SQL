@@ -1,161 +1,309 @@
 -- ================================================================
 -- CHAPTER 12: Advanced Query Techniques
--- MAIN CODE + EXERCISES
+-- MAIN CODE
 -- Data files: C:\SQL\
 -- ================================================================
--- REQUIRED FILE (download from nostarch.com):
---   temperature_data.csv  (or use the INSERT statements below)
+-- REQUIRED FILES (download from nostarch.com/practicalSQL/):
+--   ice_cream_survey.csv
+--   temperature_readings.csv
 
 
 -- ================================================================
 -- Subqueries
 -- ================================================================
 
--- Subquery in WHERE clause (counties with above-average population):
--- SELECT geo_name, state_us_abbreviation AS st, p0010001 AS pop
--- FROM us_counties_2010
--- WHERE p0010001 >= (SELECT percentile_cont(.9) WITHIN GROUP
---                   (ORDER BY p0010001) FROM us_counties_2010)
--- ORDER BY p0010001 DESC;
+-- Listing 12-1: Using a subquery in a WHERE clause
+-- (Counties at or above the 90th percentile for population)
+SELECT geo_name,
+       state_us_abbreviation,
+       p0010001
+FROM us_counties_2010
+WHERE p0010001 >= (
+    SELECT percentile_cont(.9) WITHIN GROUP (ORDER BY p0010001)
+    FROM us_counties_2010
+)
+ORDER BY p0010001 DESC;
 
--- Subquery as a derived table in FROM clause:
--- SELECT round(calcs.average, 0) AS average,
---        calcs.median,
---        round(calcs.average - calcs.median, 0) AS median_average_diff
--- FROM (SELECT avg(p0010001) AS average,
---              percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)::numeric AS median
---       FROM us_counties_2010) AS calcs;
 
--- Subquery as a column in SELECT:
--- SELECT geo_name,
---        state_us_abbreviation AS st,
---        p0010001 AS total_pop,
---        (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
---         FROM us_counties_2010) AS us_median
--- FROM us_counties_2010;
+-- Listing 12-2: Using a subquery in a WHERE clause with DELETE
+-- (Make a backup copy, then delete counties below top 10%)
+CREATE TABLE us_counties_2010_top10 AS
+SELECT * FROM us_counties_2010;
 
--- Subquery with column math:
--- SELECT geo_name,
---        state_us_abbreviation AS st,
---        p0010001 AS total_pop,
---        (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
---         FROM us_counties_2010) AS us_median,
---        p0010001 - (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
---                    FROM us_counties_2010) AS diff_from_median
--- FROM us_counties_2010
--- WHERE (p0010001 - (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
---                    FROM us_counties_2010)) BETWEEN -1000 AND 1000;
+DELETE FROM us_counties_2010_top10
+WHERE p0010001 < (
+    SELECT percentile_cont(.9) WITHIN GROUP (ORDER BY p0010001)
+    FROM us_counties_2010_top10
+);
+
+
+-- Listing 12-3: Subquery as a derived table in a FROM clause
+-- (Compare average vs. median county population)
+SELECT round(calcs.average, 0) AS average,
+       calcs.median,
+       round(calcs.average - calcs.median, 0) AS median_average_diff
+FROM (
+    SELECT avg(p0010001) AS average,
+           percentile_cont(.5)
+               WITHIN GROUP (ORDER BY p0010001)::numeric(10,1) AS median
+    FROM us_counties_2010
+) AS calcs;
+
+
+-- Listing 12-4: Joining two derived tables
+-- (Meat/poultry/egg plants per million population by state)
+SELECT census.state_us_abbreviation AS st,
+       census.st_population,
+       plants.plant_count,
+       round((plants.plant_count / census.st_population::numeric(10,1)) * 1000000, 1)
+           AS plants_per_million
+FROM
+    (
+        SELECT st,
+               count(*) AS plant_count
+        FROM meat_poultry_egg_inspect
+        GROUP BY st
+    ) AS plants
+JOIN
+    (
+        SELECT state_us_abbreviation,
+               sum(p0010001) AS st_population
+        FROM us_counties_2010
+        GROUP BY state_us_abbreviation
+    ) AS census
+    ON plants.st = census.state_us_abbreviation
+ORDER BY plants_per_million DESC;
+
+
+-- Listing 12-5: Adding a subquery to a column list
+-- (Show each county alongside the national median)
+SELECT geo_name,
+       state_us_abbreviation AS st,
+       p0010001 AS total_pop,
+       (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
+        FROM us_counties_2010) AS us_median
+FROM us_counties_2010;
+
+
+-- Listing 12-6: Using a subquery expression in a calculation
+-- (Counties within 1,000 of the national median population)
+SELECT geo_name,
+       state_us_abbreviation AS st,
+       p0010001 AS total_pop,
+       (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
+        FROM us_counties_2010) AS us_median,
+       p0010001 - (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
+                   FROM us_counties_2010) AS diff_from_median
+FROM us_counties_2010
+WHERE (p0010001 - (SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)
+                   FROM us_counties_2010))
+BETWEEN -1000 AND 1000;
+
+
+-- ================================================================
+-- Subquery Expressions
+-- ================================================================
+
+-- IN (subquery): employees who appear in the retirees table
+SELECT first_name, last_name
+FROM employees
+WHERE id IN (
+    SELECT id
+    FROM retirees);
+
+-- EXISTS (subquery): returns rows only if retirees table has matches
+SELECT first_name, last_name
+FROM employees
+WHERE EXISTS (
+    SELECT id
+    FROM retirees);
+
+-- Correlated EXISTS: match employee id to retirees id
+SELECT first_name, last_name
+FROM employees
+WHERE EXISTS (
+    SELECT id
+    FROM retirees
+    WHERE id = employees.id);
+
+-- NOT EXISTS: employees with NO corresponding retiree record
+SELECT first_name, last_name
+FROM employees
+WHERE NOT EXISTS (
+    SELECT id
+    FROM retirees
+    WHERE id = employees.id);
 
 
 -- ================================================================
 -- Common Table Expressions (CTE)
 -- ================================================================
 
--- Simple CTE:
--- WITH large_counties (geo_name, st, pop) AS (
---     SELECT geo_name, state_us_abbreviation, p0010001
---     FROM us_counties_2010 WHERE p0010001 >= 100000
--- )
--- SELECT st, count(*) FROM large_counties GROUP BY st ORDER BY count(*) DESC;
+-- Listing 12-7: Using a simple CTE to find large counties
+WITH large_counties (geo_name, st, p0010001) AS
+    (SELECT geo_name, state_us_abbreviation, p0010001
+     FROM us_counties_2010
+     WHERE p0010001 >= 100000)
+SELECT st, count(*)
+FROM large_counties
+GROUP BY st
+ORDER BY count(*) DESC;
 
--- CTE rewriting the derived table example:
--- WITH us_median AS (
---     SELECT percentile_cont(.5) WITHIN GROUP (ORDER BY p0010001)::numeric AS us_median_pop
---     FROM us_counties_2010
--- )
--- SELECT geo_name,
---        state_us_abbreviation AS st,
---        p0010001 AS total_pop,
---        us_median_pop,
---        p0010001 - us_median_pop AS diff_from_median
--- FROM us_counties_2010 CROSS JOIN us_median
--- WHERE (p0010001 - us_median_pop) BETWEEN -1000 AND 1000;
+
+-- Listing 12-8: Using CTEs in a table join
+-- (Rewrite of Listing 12-4 using CTEs for readability)
+WITH
+    counties (st, population) AS
+        (SELECT state_us_abbreviation, sum(p0010001)
+         FROM us_counties_2010
+         GROUP BY state_us_abbreviation),
+    plants (st, plants) AS
+        (SELECT st, count(*) AS plants
+         FROM meat_poultry_egg_inspect
+         GROUP BY st)
+SELECT counties.st,
+       population,
+       plants,
+       round((plants / population::numeric(10,1)) * 1000000, 1) AS per_million
+FROM counties JOIN plants
+    ON counties.st = plants.st
+ORDER BY per_million DESC;
+
+
+-- Listing 12-9: Using CTEs to minimize redundant code
+-- (Rewrite of Listing 12-6 with a single CTE for the median)
+WITH us_median AS
+    (SELECT percentile_cont(.5)
+         WITHIN GROUP (ORDER BY p0010001) AS us_median_pop
+     FROM us_counties_2010)
+SELECT geo_name,
+       state_us_abbreviation AS st,
+       p0010001 AS total_pop,
+       us_median_pop,
+       p0010001 - us_median_pop AS diff_from_median
+FROM us_counties_2010 CROSS JOIN us_median
+WHERE (p0010001 - us_median_pop)
+BETWEEN -1000 AND 1000;
 
 
 -- ================================================================
 -- Cross Tabulations (crosstab)
 -- ================================================================
 
--- Enable tablefunc module first:
--- CREATE EXTENSION tablefunc;
+-- Enable the tablefunc module (run once per database):
+CREATE EXTENSION tablefunc;
 
--- Temperature data table:
--- CREATE TABLE ice_cream_survey (
---     response_id integer PRIMARY KEY,
---     office varchar(20),
---     flavor varchar(20)
--- );
--- INSERT INTO ice_cream_survey VALUES
---     (1,'Downtown','Chocolate'),(2,'Downtown','Chocolate'),
---     (3,'Downtown','Strawberry'),(4,'Midtown','Chocolate'),
---     (5,'Midtown','Strawberry'),(6,'Midtown','Vanilla'),
---     (7,'Uptown','Vanilla'),(8,'Uptown','Vanilla'),
---     (9,'Uptown','Chocolate');
 
--- Crosstab of flavor votes by office:
--- SELECT *
--- FROM crosstab('SELECT office, flavor, count(*) FROM ice_cream_survey
---                GROUP BY office, flavor ORDER BY office',
---               'SELECT DISTINCT flavor FROM ice_cream_survey ORDER BY flavor')
--- AS (office varchar(20), chocolate bigint, strawberry bigint, vanilla bigint);
+-- Listing 12-10: Creating and filling the ice_cream_survey table
+CREATE TABLE ice_cream_survey (
+    response_id integer PRIMARY KEY,
+    office varchar(20),
+    flavor varchar(20)
+);
+
+COPY ice_cream_survey
+FROM 'C:\SQL\ice_cream_survey.csv'
+WITH (FORMAT CSV, HEADER);
+
+-- Quick check of the data:
+SELECT *
+FROM ice_cream_survey
+LIMIT 5;
+
+
+-- Listing 12-11: Generating the ice cream survey crosstab
+-- (Rows = office, Columns = flavor, Cells = vote count)
+SELECT *
+FROM crosstab('SELECT office,
+                      flavor,
+                      count(*)
+               FROM ice_cream_survey
+               GROUP BY office, flavor
+               ORDER BY office',
+              'SELECT flavor
+               FROM ice_cream_survey
+               GROUP BY flavor
+               ORDER BY flavor')
+AS (office varchar(20),
+    chocolate bigint,
+    strawberry bigint,
+    vanilla bigint);
+
+
+-- Listing 12-12: Creating and filling a temperature_readings table
+CREATE TABLE temperature_readings (
+    reading_id bigserial,
+    station_name varchar(50),
+    observation_date date,
+    max_temp integer,
+    min_temp integer
+);
+
+COPY temperature_readings
+    (station_name, observation_date, max_temp, min_temp)
+FROM 'C:\SQL\temperature_readings.csv'
+WITH (FORMAT CSV, HEADER);
+
+
+-- Listing 12-13: Generating the temperature readings crosstab
+-- (Rows = station, Columns = month, Cells = median max temp)
+SELECT *
+FROM crosstab('SELECT
+                   station_name,
+                   date_part(''month'', observation_date),
+                   percentile_cont(.5)
+                       WITHIN GROUP (ORDER BY max_temp)
+               FROM temperature_readings
+               GROUP BY station_name,
+                        date_part(''month'', observation_date)
+               ORDER BY station_name',
+              'SELECT month
+               FROM generate_series(1,12) month')
+AS (station varchar(50),
+    jan numeric(3,0),
+    feb numeric(3,0),
+    mar numeric(3,0),
+    apr numeric(3,0),
+    may numeric(3,0),
+    jun numeric(3,0),
+    jul numeric(3,0),
+    aug numeric(3,0),
+    sep numeric(3,0),
+    oct numeric(3,0),
+    nov numeric(3,0),
+    dec numeric(3,0)
+);
 
 
 -- ================================================================
--- CASE Statement
+-- Reclassifying Values with CASE
 -- ================================================================
 
--- Reclassify census population into groups:
--- SELECT geo_name, state_us_abbreviation AS st, p0010001 AS pop,
---        CASE WHEN p0010001 >= 100000 THEN 'large'
---             WHEN p0010001 BETWEEN 25000 AND 99999 THEN 'medium'
---             ELSE 'small' END AS pop_class
--- FROM us_counties_2010
--- ORDER BY state_us_abbreviation, geo_name;
-
--- CASE in WHERE clause:
--- SELECT geo_name, state_us_abbreviation AS st, p0010001 AS pop
--- FROM us_counties_2010
--- WHERE CASE WHEN state_us_abbreviation = 'NY' THEN p0010001 >= 100000
---            WHEN state_us_abbreviation = 'CA' THEN p0010001 >= 200000
---            ELSE p0010001 >= 50000 END
--- ORDER BY state_us_abbreviation, geo_name;
+-- Listing 12-14: Reclassifying temperature data with CASE
+SELECT max_temp,
+       CASE WHEN max_temp >= 90 THEN 'Hot'
+            WHEN max_temp BETWEEN 70 AND 89 THEN 'Warm'
+            WHEN max_temp BETWEEN 50 AND 69 THEN 'Pleasant'
+            WHEN max_temp BETWEEN 33 AND 49 THEN 'Cold'
+            WHEN max_temp BETWEEN 20 AND 32 THEN 'Freezing'
+            ELSE 'Inhumane'
+       END AS temperature_group
+FROM temperature_readings;
 
 
--- ================================================================
--- CHAPTER 12: Try It Yourself Exercises
--- ================================================================
-
--- Exercise 1: Using a CTE, find counties with population in the
--- 90th percentile for their state.
--- WITH county_pcts AS (
---     SELECT state_us_abbreviation AS st,
---            percentile_cont(.9) WITHIN GROUP (ORDER BY p0010001) AS pct_90
---     FROM us_counties_2010 GROUP BY state_us_abbreviation
--- )
--- SELECT c.geo_name, c.state_us_abbreviation AS st, c.p0010001 AS pop, cp.pct_90
--- FROM us_counties_2010 c JOIN county_pcts cp ON c.state_us_abbreviation = cp.st
--- WHERE c.p0010001 >= cp.pct_90
--- ORDER BY st, pop DESC;
-
-
--- Exercise 2: Using a CTE and the 2014 library data, find agencies
--- where the number of visits is below the state median.
--- WITH state_median AS (
---     SELECT stabr,
---            percentile_cont(.5) WITHIN GROUP (ORDER BY visits) AS median_visits
---     FROM pls_fy2014_pupld14a WHERE visits >= 0 GROUP BY stabr
--- )
--- SELECT p.libname, p.stabr, p.visits, sm.median_visits
--- FROM pls_fy2014_pupld14a p JOIN state_median sm ON p.stabr = sm.stabr
--- WHERE p.visits < sm.median_visits AND p.visits >= 0
--- ORDER BY p.stabr, p.visits DESC;
-
-
--- Exercise 3: Use CASE in a query to reclassify county populations
--- and count counties in each class per state.
--- SELECT state_us_abbreviation AS st,
---        sum(CASE WHEN p0010001 >= 100000 THEN 1 ELSE 0 END) AS large,
---        sum(CASE WHEN p0010001 BETWEEN 25000 AND 99999 THEN 1 ELSE 0 END) AS medium,
---        sum(CASE WHEN p0010001 < 25000 THEN 1 ELSE 0 END) AS small
--- FROM us_counties_2010
--- GROUP BY state_us_abbreviation ORDER BY state_us_abbreviation;
+-- Listing 12-15: Using CASE in a CTE
+-- (Count days in each temperature group per city)
+WITH temps_collapsed (station_name, max_temperature_group) AS
+    (SELECT station_name,
+            CASE WHEN max_temp >= 90 THEN 'Hot'
+                 WHEN max_temp BETWEEN 70 AND 89 THEN 'Warm'
+                 WHEN max_temp BETWEEN 50 AND 69 THEN 'Pleasant'
+                 WHEN max_temp BETWEEN 33 AND 49 THEN 'Cold'
+                 WHEN max_temp BETWEEN 20 AND 32 THEN 'Freezing'
+                 ELSE 'Inhumane'
+            END
+     FROM temperature_readings)
+SELECT station_name, max_temperature_group, count(*)
+FROM temps_collapsed
+GROUP BY station_name, max_temperature_group
+ORDER BY station_name, count(*) DESC;

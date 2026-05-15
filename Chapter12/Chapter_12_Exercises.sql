@@ -1,83 +1,62 @@
 -- ================================================================
 -- CHAPTER 12: Advanced Query Techniques
 -- TRY IT YOURSELF - EXERCISES
+-- Data files: C:\SQL\
 -- ================================================================
--- Requires: us_counties_2010 and pls_fy2014_pupld14a tables
+-- Requires: temperature_readings and ice_cream_survey tables
+-- (created in Chapter_12_Code.sql)
 
 
--- ----------------------------------------------------------------
--- Exercise 1:
--- Using a CTE, find all counties where the population is at or
--- above the 90th percentile FOR THEIR OWN STATE.
--- Each state's 90th percentile is calculated separately.
--- Show: county name, state, population, and the state's 90th percentile.
--- ----------------------------------------------------------------
+-- ================================================================
+-- EXERCISE 1 (Listing 12-15 revised)
+-- Revise the CTE from Listing 12-15 to focus only on Waikiki.
+-- Reclassify Waikiki's max daily temperatures into 7 groups
+-- and count how many days fall into each group.
+-- ================================================================
 
--- WITH county_pcts AS (
---     SELECT state_us_abbreviation AS st,
---            percentile_cont(.9)
---                WITHIN GROUP (ORDER BY p0010001) AS pct_90
---     FROM us_counties_2010
---     GROUP BY state_us_abbreviation
--- )
--- SELECT c.geo_name,
---        c.state_us_abbreviation AS st,
---        c.p0010001 AS pop,
---        cp.pct_90
--- FROM us_counties_2010 c
--- JOIN county_pcts cp
---     ON c.state_us_abbreviation = cp.st
--- WHERE c.p0010001 >= cp.pct_90
--- ORDER BY st, pop DESC;
-
-
--- ----------------------------------------------------------------
--- Exercise 2:
--- Using a CTE and the 2014 library survey, find all agencies
--- whose visit count is BELOW their own state's median.
--- Show: library name, state, visits, and the state's median.
--- Exclude negative visit values.
--- ----------------------------------------------------------------
-
--- WITH state_median AS (
---     SELECT stabr,
---            percentile_cont(.5)
---                WITHIN GROUP (ORDER BY visits) AS median_visits
---     FROM pls_fy2014_pupld14a
---     WHERE visits >= 0
---     GROUP BY stabr
--- )
--- SELECT p.libname,
---        p.stabr,
---        p.visits,
---        sm.median_visits
--- FROM pls_fy2014_pupld14a p
--- JOIN state_median sm ON p.stabr = sm.stabr
--- WHERE p.visits < sm.median_visits
---   AND p.visits >= 0
--- ORDER BY p.stabr, p.visits DESC;
+WITH temps_collapsed (station_name, max_temperature_group) AS
+    (SELECT station_name,
+            CASE WHEN max_temp >= 90             THEN '90 or more'
+                 WHEN max_temp BETWEEN 88 AND 89 THEN '88-89'
+                 WHEN max_temp BETWEEN 86 AND 87 THEN '86-87'
+                 WHEN max_temp BETWEEN 84 AND 85 THEN '84-85'
+                 WHEN max_temp BETWEEN 82 AND 83 THEN '82-83'
+                 WHEN max_temp BETWEEN 80 AND 81 THEN '80-81'
+                 ELSE '79 or less'
+            END
+     FROM temperature_readings
+     WHERE station_name = 'WAIKIKI 717.2 HI US')   -- Waikiki only
+SELECT station_name,
+       max_temperature_group,
+       count(*) AS frequency
+FROM temps_collapsed
+GROUP BY station_name, max_temperature_group
+ORDER BY frequency DESC;
 
 
--- ----------------------------------------------------------------
--- Exercise 3:
--- Use a CASE statement inside sum() to count counties by
--- population size class (large/medium/small) PER STATE.
--- Large  = 100,000 or more
--- Medium = 25,000 to 99,999
--- Small  = under 25,000
--- ----------------------------------------------------------------
+-- ================================================================
+-- EXERCISE 2 (Listing 12-11 revised)
+-- Flip the ice cream survey crosstab so that:
+--   Rows    = flavor
+--   Columns = office (Downtown, Midtown, Uptown)
+-- Changes needed vs. Listing 12-11:
+--   1. Swap the first two columns in the data subquery
+--      (flavor first, then office — flavor becomes the row label)
+--   2. Update the second subquery to return distinct offices
+--   3. Update the AS column list to match the new layout
+-- ================================================================
 
--- SELECT state_us_abbreviation AS st,
---        sum(CASE WHEN p0010001 >= 100000
---                 THEN 1 ELSE 0 END) AS large,
---        sum(CASE WHEN p0010001 BETWEEN 25000 AND 99999
---                 THEN 1 ELSE 0 END) AS medium,
---        sum(CASE WHEN p0010001 < 25000
---                 THEN 1 ELSE 0 END) AS small
--- FROM us_counties_2010
--- GROUP BY state_us_abbreviation
--- ORDER BY state_us_abbreviation;
-
--- This technique is called conditional aggregation.
--- CASE returns 1 when the condition is true, 0 when false.
--- sum() adds up the 1s to get a count per category.
+SELECT *
+FROM crosstab('SELECT flavor,
+                      office,
+                      count(*)
+               FROM ice_cream_survey
+               GROUP BY flavor, office
+               ORDER BY flavor',
+              'SELECT DISTINCT office
+               FROM ice_cream_survey
+               ORDER BY office')
+AS (flavor     varchar(20),
+    downtown   bigint,
+    midtown    bigint,
+    uptown     bigint);
