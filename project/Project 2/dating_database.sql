@@ -1,5 +1,3 @@
-
-
 -- ============================================================
 -- DROP TABLES (clean slate, order matters due to FK constraints)
 -- ============================================================
@@ -15,39 +13,38 @@ DROP TABLE IF EXISTS status           CASCADE;
 
 -- ============================================================
 -- LOOKUP / REFERENCE TABLES
+-- Small, reusable value lists referenced by my_contacts
 -- ============================================================
 
--- 1. profession  (UNIQUE constraint on the profession name)
+-- Stores job titles; UNIQUE prevents duplicates
 CREATE TABLE profession (
     prof_id    SERIAL PRIMARY KEY,
-    profession VARCHAR(100) NOT NULL UNIQUE   -- Requirement 1: UNIQUE constraint
+    profession VARCHAR(100) NOT NULL UNIQUE   -- Req 1: no duplicate professions
 );
 
--- 2. zip_code  (natural key, CHECK constraint limits code to 4 digits, province instead of state)
--- Requirement 2: natural key (zip_code is the PK, not a surrogate)
--- Requirement 3: province column instead of state
--- Requirement 4: all 9 SA provinces, 2 cities each
+-- Uses the zip code itself as the PK (natural key, no surrogate needed)
+-- CHECK ensures exactly 4 numeric digits, matching SA postal codes
 CREATE TABLE zip_code (
     zip_code CHAR(4)     NOT NULL
-        CHECK (zip_code ~ '^\d{4}$'),         -- Requirement 2: exactly 4 digits
+        CHECK (zip_code ~ '^\d{4}$'),         -- Req 2: 4-digit SA postal code
     city     VARCHAR(100) NOT NULL,
-    province VARCHAR(100) NOT NULL,
-    PRIMARY KEY (zip_code)                    -- natural key
+    province VARCHAR(100) NOT NULL,            -- Req 3: province instead of state
+    PRIMARY KEY (zip_code)
 );
 
--- 3. status
+-- Relationship status options (Single, Divorced, etc.)
 CREATE TABLE status (
     status_id SERIAL PRIMARY KEY,
     status    VARCHAR(50) NOT NULL
 );
 
--- 4. interests
+-- Hobbies/interests a contact can have
 CREATE TABLE interests (
     interest_id SERIAL PRIMARY KEY,
     interest    VARCHAR(100) NOT NULL
 );
 
--- 5. seeking
+-- What a contact is looking for (relationship, friendship, etc.)
 CREATE TABLE seeking (
     seeking_id SERIAL PRIMARY KEY,
     seeking    VARCHAR(100) NOT NULL
@@ -56,6 +53,7 @@ CREATE TABLE seeking (
 
 -- ============================================================
 -- MAIN TABLE
+-- Central record for each person in the contact list
 -- ============================================================
 CREATE TABLE my_contacts (
     contact_id SERIAL PRIMARY KEY,
@@ -63,30 +61,31 @@ CREATE TABLE my_contacts (
     first_name VARCHAR(100) NOT NULL,
     phone      VARCHAR(20),
     email      VARCHAR(150),
-    gender     CHAR(1) CHECK (gender IN ('M','F','O')),
+    gender     CHAR(1) CHECK (gender IN ('M','F','O')),  -- M/F/Other only
     birthday   DATE,
-    prof_id    INT  REFERENCES profession(prof_id),
-    zip_code   CHAR(4) REFERENCES zip_code(zip_code),
-    status_id  INT  REFERENCES status(status_id)
+    prof_id    INT  REFERENCES profession(prof_id),       -- FK → profession
+    zip_code   CHAR(4) REFERENCES zip_code(zip_code),    -- FK → zip_code
+    status_id  INT  REFERENCES status(status_id)          -- FK → status
 );
 
 
 -- ============================================================
--- JUNCTION / JOINING TABLES  (many-to-many)
+-- JUNCTION / JOINING TABLES
+-- Resolve many-to-many relationships between contacts and lists
 -- ============================================================
 
--- contact_interest  (composite PK)
+-- One contact can have many interests; one interest can belong to many contacts
 CREATE TABLE contact_interest (
     contact_id  INT NOT NULL REFERENCES my_contacts(contact_id),
     interest_id INT NOT NULL REFERENCES interests(interest_id),
-    PRIMARY KEY (contact_id, interest_id)
+    PRIMARY KEY (contact_id, interest_id)   -- composite PK prevents duplicates
 );
 
--- contact_seeking  (composite PK)
+-- One contact can seek many things; one seeking type can apply to many contacts
 CREATE TABLE contact_seeking (
     contact_id INT NOT NULL REFERENCES my_contacts(contact_id),
     seeking_id INT NOT NULL REFERENCES seeking(seeking_id),
-    PRIMARY KEY (contact_id, seeking_id)
+    PRIMARY KEY (contact_id, seeking_id)    -- composite PK prevents duplicates
 );
 
 
@@ -115,7 +114,7 @@ INSERT INTO profession (profession) VALUES
     ('Architect');
 
 
--- ---- zip_code (Requirement 4: all 9 provinces, 2 cities each) ----
+-- Req 4: all 9 SA provinces, 2 cities each
 INSERT INTO zip_code (zip_code, city, province) VALUES
     -- Gauteng
     ('2000', 'Johannesburg',  'Gauteng'),
@@ -184,7 +183,7 @@ INSERT INTO seeking (seeking) VALUES
     ('Adventure partner');
 
 
--- ---- my_contacts (Requirement 6: more than 15 contacts) ----
+-- Req 6: 20 contacts (exceeds the minimum of 15)
 INSERT INTO my_contacts
     (last_name, first_name, phone, email, gender, birthday, prof_id, zip_code, status_id)
 VALUES
@@ -210,9 +209,7 @@ VALUES
     ('Williams',   'Naomi',     '0856669999', 'naomi@email.com',     'F', '1995-08-18', 5,  '5200', 1);
 
 
--- ============================================================
--- contact_interest  (Requirement 5: each contact gets 3+ interests)
--- ============================================================
+-- Req 5: each contact has at least 3 interests
 INSERT INTO contact_interest (contact_id, interest_id) VALUES
     -- Sipho: Hiking, Football, Travel
     (1, 1),(1, 11),(1, 5),
@@ -256,9 +253,7 @@ INSERT INTO contact_interest (contact_id, interest_id) VALUES
     (20, 15),(20, 5),(20, 6);
 
 
--- ============================================================
--- contact_seeking
--- ============================================================
+-- Each contact seeks 2 things (e.g. marriage + friendship)
 INSERT INTO contact_seeking (contact_id, seeking_id) VALUES
     (1, 1),(1, 2),
     (2, 1),(2, 4),
@@ -283,9 +278,9 @@ INSERT INTO contact_seeking (contact_id, seeking_id) VALUES
 
 
 -- ============================================================
--- LEFT JOIN QUERY
--- Displays: profession, zip_code, city, province, status,
---           interests (aggregated), seeking (aggregated)
+-- MAIN REPORT QUERY
+-- Joins all tables to produce one row per contact with
+-- interests and seeking values collapsed into comma-separated strings
 -- ============================================================
 SELECT
     c.contact_id,
@@ -296,24 +291,20 @@ SELECT
     z.city,
     z.province,
     s.status,
+    -- DISTINCT + ORDER BY avoids duplicates and sorts the list alphabetically
     STRING_AGG(DISTINCT i.interest,  ', ' ORDER BY i.interest)  AS interests,
     STRING_AGG(DISTINCT sk.seeking,  ', ' ORDER BY sk.seeking)  AS seeking
 FROM my_contacts c
-    LEFT JOIN profession      p   ON c.prof_id    = p.prof_id
-    LEFT JOIN zip_code        z   ON c.zip_code   = z.zip_code
-    LEFT JOIN status          s   ON c.status_id  = s.status_id
-    LEFT JOIN contact_interest ci ON c.contact_id = ci.contact_id
+    LEFT JOIN profession      p   ON c.prof_id      = p.prof_id       -- may be NULL if no profession set
+    LEFT JOIN zip_code        z   ON c.zip_code     = z.zip_code      -- may be NULL if no location set
+    LEFT JOIN status          s   ON c.status_id    = s.status_id     -- may be NULL if no status set
+    LEFT JOIN contact_interest ci ON c.contact_id   = ci.contact_id   -- junction: contact → interests
     LEFT JOIN interests        i  ON ci.interest_id = i.interest_id
-    LEFT JOIN contact_seeking  cs ON c.contact_id = cs.contact_id
+    LEFT JOIN contact_seeking  cs ON c.contact_id   = cs.contact_id   -- junction: contact → seeking
     LEFT JOIN seeking          sk ON cs.seeking_id  = sk.seeking_id
 GROUP BY
-    c.contact_id,
-    c.first_name,
-    c.last_name,
-    p.profession,
-    z.zip_code,
-    z.city,
-    z.province,
-    s.status
+    -- GROUP BY required so STRING_AGG can aggregate per contact
+    c.contact_id, c.first_name, c.last_name,
+    p.profession, z.zip_code, z.city, z.province, s.status
 ORDER BY
     c.contact_id;
